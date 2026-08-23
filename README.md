@@ -1,5 +1,8 @@
-<img width="655" height="655" alt="app_icon_1024_source" src="https://github.com/user-attachments/assets/a2374063-a01a-4dcd-adb4-2f8595a74e98" />
-# ShadToypadBridge
+<p align="center">
+  <img width="120" height="120" alt="ShadToypadBridge icon" src="https://github.com/user-attachments/assets/a2374063-a01a-4dcd-adb4-2f8595a74e98" />
+</p>
+
+<h1 align="center">ShadToypadBridge</h1>
 
 A small bridge that connects the controller-driven [**LegoToypad**](https://github.com/harrysof/LegoToypad) app to [shadPS4](https://github.com/shadps4-emu/shadPS4)'s built-in LEGO Dimensions Toypad, so you can load, remove and swap figures in-game straight from a controller. No emulator fork needed — stock shadPS4, stock app, one small program in between.
 
