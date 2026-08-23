@@ -1,4 +1,4 @@
-# shadPS4 Seamless Toypad Build
+# ShadToypadBridge
 
 A small bridge that connects the controller-driven [**LegoToypad**](https://github.com/harrysof/LegoToypad) companion app to [shadPS4](https://github.com/shadps4-emu/shadPS4)'s built-in emulated LEGO Dimensions Toypad, so figures can be loaded, removed or moved in game straight from a controller.
 
