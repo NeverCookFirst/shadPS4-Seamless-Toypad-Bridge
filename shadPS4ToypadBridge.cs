@@ -1,4 +1,4 @@
-// ShadToypadBridge - TCP bridge between the LegoToypad app (harrysof) and shadPS4.
+// shadPS4 Seamless Toypad Bridge - TCP bridge between the LegoToypad app (harrysof) and shadPS4.
 //
 //   LegoToypad.exe --TCP 127.0.0.1:9191--> [this bridge] --stdin/IPC--> shadPS4.exe
 //
@@ -476,7 +476,7 @@ static class ShadToypadBridge
         bool configOk = ResolvePaths();
         if (!configOk && args.Length == 0)
         {
-            Console.Error.WriteLine("[bridge] Cannot determine shadPS4 user data. Usage: ShadToypadBridge.exe <path-to-eboot.bin> [port]");
+            Console.Error.WriteLine("[bridge] Cannot determine shadPS4 user data. Usage: shadPS4ToypadBridge.exe <path-to-eboot.bin> [port]");
             return 2;
         }
         if (!configOk)
@@ -490,7 +490,7 @@ static class ShadToypadBridge
             if (games.Count == 0)
             {
                 Console.Error.WriteLine("[bridge] No games found in shadPS4 QtLauncher config.");
-                Console.Error.WriteLine("[bridge] Usage: ShadToypadBridge.exe <path-to-eboot.bin> [port]");
+                Console.Error.WriteLine("[bridge] Usage: shadPS4ToypadBridge.exe <path-to-eboot.bin> [port]");
                 return 2;
             }
             else if (games.Count == 1)

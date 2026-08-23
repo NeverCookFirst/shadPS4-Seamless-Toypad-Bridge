@@ -1,12 +1,16 @@
 <p align="center">
-  <img width="120" height="120" alt="ShadToypadBridge icon" src="https://github.com/user-attachments/assets/a2374063-a01a-4dcd-adb4-2f8595a74e98" />
+  <img width="120" height="120" alt="shadPS4 Seamless Toypad Bridge icon" src="https://github.com/user-attachments/assets/a2374063-a01a-4dcd-adb4-2f8595a74e98" />
 </p>
 
-<h1 align="center">ShadToypadBridge</h1>
+<h1 align="center">shadPS4 Seamless Toypad Bridge</h1>
 
-A small bridge that connects the controller-driven [**LegoToypad**](https://github.com/harrysof/LegoToypad) app to [shadPS4](https://github.com/shadps4-emu/shadPS4)'s built-in LEGO Dimensions Toypad, so you can load, remove and swap figures in-game straight from a controller. No emulator fork needed — stock shadPS4, stock app, one small program in between.
+A small standalone utility that connects the controller-driven [**LegoToypad**](https://github.com/harrysof/LegoToypad) app to [shadPS4](https://github.com/shadps4-emu/shadPS4)'s built-in LEGO Dimensions Toypad, so you can load, remove and swap figures in-game straight from a controller. This is **not a custom emulator build** — no fork, no patched exe: stock shadPS4, stock app, one small program in between.
 
 Tested on shadPS4 **v0.18.1 WIP** with LEGO Dimensions **CUSA01176**.
+
+## Video guide
+
+[![shadPS4 Seamless Toypad Bridge — setup guide](https://img.youtube.com/vi/98PDU0lcJ1c/maxresdefault.jpg)](https://www.youtube.com/watch?v=98PDU0lcJ1c)
 
 ## What you need
 
@@ -17,14 +21,14 @@ Tested on shadPS4 **v0.18.1 WIP** with LEGO Dimensions **CUSA01176**.
 
 ## Setup
 
-1. Drop `ShadToypadBridge.exe` into the same folder as `shadPS4.exe`.
-2. Double-click `ShadToypadBridge.exe`. It finds the emulator in its own folder and launches the game (pick it from the list if you have more than one).
+1. Drop `shadPS4ToypadBridge.exe` into the same folder as `shadPS4.exe`.
+2. Double-click `shadPS4ToypadBridge.exe`. It finds the emulator in its own folder and launches the game (pick it from the list if you have more than one).
 3. Wait for:
    - `[bridge] IPC handshake done (RUN+START sent)`
    - `[bridge] Toypad listener active on 127.0.0.1:9191`
 4. Run LegoToypad, put your tag library in a folder named `Lego Dimensions Organized bins`, and it will appear in-game.
 
-**Important:** always start the game through `ShadToypadBridge.exe`, not the Qt launcher. The bridge owns shadPS4's stdin/stderr — that's how it sends figure commands.
+**Important:** always start the game through `shadPS4ToypadBridge.exe`, not the Qt launcher. The bridge owns shadPS4's stdin/stderr — that's how it sends figure commands.
 
 ## Using it
 
@@ -42,8 +46,8 @@ Swapping and clearing figures works the same way — pick a slot, then Load / Mo
 
 ## Troubleshooting
 
-- **No bridge lines appear** → start the game via `ShadToypadBridge.exe`, not the Qt launcher.
-- **Port 9191 is busy** → set a custom port in LegoToypad's `LegoToypad.ini` (`[Listener] Port=`) and pass it as the second argument to `ShadToypadBridge.exe`.
+- **No bridge lines appear** → start the game via `shadPS4ToypadBridge.exe`, not the Qt launcher.
+- **Port 9191 is busy** → set a custom port in LegoToypad's `LegoToypad.ini` (`[Listener] Port=`) and pass it as the second argument to `shadPS4ToypadBridge.exe`.
 
 ## Build from source
 
