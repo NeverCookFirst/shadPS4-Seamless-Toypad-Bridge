@@ -23,6 +23,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Collections.Generic;
+using System.Windows.Forms;
 
 static class ShadToypadBridge
 {
@@ -41,6 +42,14 @@ static class ShadToypadBridge
     static readonly object stdinLock = new object();
     static Process emu;
     static int tempCounter;                // counter for unique figure file names
+
+    // Resolved paths. launcherDir is the QtLauncher data dir (%APPDATA%\shadPS4QtLauncher in
+    // global mode, or the "launcher" folder inside a portable shadPS4/QtLauncher installation).
+    // configPath is the shadPS4 config.json the emulator will actually read (%APPDATA%\shadPS4 in
+    // global mode, or <shadPS4.exe dir>\user\config.json in portable mode). emuPath is shadPS4.exe.
+    static string launcherDir;
+    static string configPath;
+    static string emuPath;
 
     // Folder for per-slot figure files (in %LOCALAPPDATA%\ShadToypadBridge).
     // IMPORTANT: shadPS4 keeps the currently loaded .bin open (ReadWrite), so the bridge NEVER
@@ -69,10 +78,13 @@ static class ShadToypadBridge
     {
         try
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            
+            string baseDir = launcherDir;
+            if (string.IsNullOrEmpty(baseDir))
+                baseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "shadPS4QtLauncher");
+
             // 1. qt_ui.ini
-            string iniPath = Path.Combine(appData, "shadPS4QtLauncher", "qt_ui.ini");
+            string iniPath = Path.Combine(baseDir, "qt_ui.ini");
             if (File.Exists(iniPath))
             {
                 foreach (string line in File.ReadAllLines(iniPath))
@@ -86,7 +98,7 @@ static class ShadToypadBridge
             }
 
             // 2. versions.json fallback
-            string versionsJson = Path.Combine(appData, "shadPS4QtLauncher", "versions.json");
+            string versionsJson = Path.Combine(baseDir, "versions.json");
             if (File.Exists(versionsJson))
             {
                 string json = File.ReadAllText(versionsJson);
@@ -111,12 +123,221 @@ static class ShadToypadBridge
         return File.Exists(localEmu) ? localEmu : null;
     }
 
+    // ── portable / global path resolution ────────────────────────────────
+    // The QtLauncher splits its data in two. In global mode everything lives in AppData
+    // (%APPDATA%\shadPS4QtLauncher + %APPDATA%\shadPS4). In portable mode the launcher keeps its
+    // own data in a "launcher" folder inside the shadPS4 installation, and the shadPS4 emulator
+    // keeps its user data in a "user" folder next to shadPS4.exe (shadPS4 uses that INSTEAD of
+    // AppData when present). So a "-launcher" folder (qt_ui.ini / versions.json) lets us find the
+    // emulator, and its <dir>\user\config.json is the portable user data.
+
+    // A valid launcher data folder holds at least one of these QtLauncher markers.
+    static bool LooksLikeLauncherDir(string dir)
+    {
+        if (string.IsNullOrEmpty(dir)) return false;
+        if (!Directory.Exists(dir)) return false;
+        return File.Exists(Path.Combine(dir, "qt_ui.ini"))
+            || File.Exists(Path.Combine(dir, "versions.json"))
+            || Directory.Exists(Path.Combine(dir, "versions"));
+    }
+
+    // ── the bridge's own config (ShadToypadBridge.ini, next to the exe) ────
+    // mode: 0 = Normal (shadPS4 user data in AppData), 1 = Portable (user data in the shadPS4
+    //       install: a "user" folder next to shadPS4.exe, games/emulator via "launcher" folder).
+    // launcher=x  : the "launcher" folder path, only used when mode=1.
+    // The ini is created on first run (the user picks the mode) and re-read every launch, so the
+    // user can change it any time by editing the file.
+
+    static int bridgeMode;              // 0 normal, 1 portable
+    static string portableLauncherDir;  // the "launcher" folder path when bridgeMode == 1
+    static string iniPath;
+
+    static void IniPath()
+    {
+        iniPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ShadToypadBridge.ini");
+    }
+
+    // Returns true if the ini already exists (mode/launcher were read into the statics).
+    static bool ReadBridgeConfig()
+    {
+        IniPath();
+        if (!File.Exists(iniPath)) return false;
+        try
+        {
+            foreach (string raw in File.ReadAllLines(iniPath))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#")) continue;
+                int eq = line.IndexOf('=');
+                if (eq < 0) continue;
+                string key = line.Substring(0, eq).Trim();
+                string val = line.Substring(eq + 1).Trim();
+                if (key.Equals("mode", StringComparison.OrdinalIgnoreCase))
+                {
+                    int m;
+                    if (int.TryParse(val, out m)) bridgeMode = m == 1 ? 1 : 0;
+                }
+                else if (key.Equals("launcher", StringComparison.OrdinalIgnoreCase))
+                {
+                    portableLauncherDir = val.Trim().TrimEnd('\\');
+                }
+            }
+        }
+        catch (Exception) { }
+        return File.Exists(iniPath);
+    }
+
+    static void WriteBridgeConfig()
+    {
+        try
+        {
+            IniPath();
+            var sb = new StringBuilder();
+            sb.AppendLine("; ShadToypadBridge - how shadPS4 stores its data");
+            sb.AppendLine("; 0 = Normal (shadPS4 user data in AppData)");
+            sb.AppendLine("; 1 = Portable (shadPS4 user data inside the shadPS4 install folder)");
+            sb.AppendLine("mode=" + bridgeMode);
+            if (bridgeMode == 1) sb.AppendLine("launcher=" + portableLauncherDir);
+            File.WriteAllText(iniPath, sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("[bridge] Could not write " + iniPath + ": " + ex.Message);
+        }
+    }
+
+    // First run: ask the user to pick Normal or Portable, and if Portable, the "launcher" folder.
+    // Returns false only if the user aborts and we can't leave the bridge in a usable state.
+    static bool FirstRunChoice()
+    {
+        Console.WriteLine("[bridge] First run: choose how shadPS4 stores its user data.");
+        Console.WriteLine("  0) Normal   - shadPS4 user data in AppData (default)");
+        Console.WriteLine("  1) Portable - shadPS4 data in a 'user'/'launcher' folder next to your shadPS4 install");
+        Console.Write("Enter 0 or 1 (default 0): ");
+        string r = Console.ReadLine();
+        int m = 0;
+        if (!int.TryParse(r, out m) || (m != 0 && m != 1)) m = 0;
+        bridgeMode = m;
+
+        if (bridgeMode == 1)
+        {
+            portableLauncherDir = PromptForLauncherDir();
+            if (string.IsNullOrEmpty(portableLauncherDir))
+            {
+                Console.WriteLine("[bridge] Portable needs the \"launcher\" folder, falling back to Normal.");
+                bridgeMode = 0;
+            }
+        }
+        WriteBridgeConfig();
+        return true;
+    }
+
+    // Folder picker: route the user to the "launcher" folder of a portable shadPS4 installation.
+    static string PromptForLauncherDir()
+    {
+        while (true)
+        {
+            using (var dlg = new FolderBrowserDialog())
+            {
+                dlg.Description =
+                    "Select the shadPS4 QtLauncher \"launcher\" folder.\n" +
+                    "(the one containing qt_ui.ini / versions.json, inside your shadPS4 install)\n\n" +
+                    "Example: C:\\Games\\Shadps4\\launcher";
+                dlg.ShowNewFolderButton = false;
+                if (dlg.ShowDialog() != DialogResult.OK)
+                    return null;
+                string dir = dlg.SelectedPath.Trim().TrimEnd('\\');
+                if (LooksLikeLauncherDir(dir))
+                    return dir;
+                Console.WriteLine("[bridge] '" + dir + "' does not look like a shadPS4 launcher folder (no qt_ui.ini / versions.json).");
+            }
+        }
+    }
+
+    // Figure out which shadPS4 config.json the emulator will actually read. shadPS4 prefers a
+    // "user" folder next to its own executable over AppData (portable mode), so check that first.
+    static bool FindConfigPath()
+    {
+        var candidates = new List<string>();
+
+        if (!string.IsNullOrEmpty(emuPath))
+        {
+            string emuDir = Path.GetDirectoryName(emuPath);
+            if (!string.IsNullOrEmpty(emuDir))
+                candidates.Add(Path.Combine(emuDir, "user", "config.json"));
+        }
+
+        candidates.Add(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "shadPS4", "config.json"));
+
+        if (launcherDir != null)
+        {
+            // QtLauncher portable mode puts the "user" folder next to the "launcher" folder.
+            candidates.Add(Path.Combine(launcherDir, "..", "user", "config.json"));
+            candidates.Add(Path.Combine(launcherDir, "config.json"));
+        }
+
+        foreach (string c in candidates)
+        {
+            if (!string.IsNullOrEmpty(c) && File.Exists(c))
+            {
+                configPath = c;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Resolve launcherDir, emuPath and configPath according to the chosen mode.
+    static bool ResolvePaths()
+    {
+        if (!ReadBridgeConfig())
+        {
+            if (!FirstRunChoice()) return false;
+        }
+
+        if (bridgeMode == 0)
+        {
+            // Normal: everything in AppData (or next to the exe).
+            launcherDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "shadPS4QtLauncher");
+            string cfg = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "shadPS4", "config.json");
+            emuPath = FindActiveEmulator();
+            configPath = File.Exists(cfg) ? cfg : null;
+            return true;
+        }
+
+        // Portable: use the launcher folder to find shadPS4.exe and its user data.
+        launcherDir = portableLauncherDir;
+        if (!LooksLikeLauncherDir(launcherDir))
+        {
+            Console.WriteLine("[bridge] Portable launcher folder is missing or invalid, please select it.");
+            launcherDir = PromptForLauncherDir();
+            if (string.IsNullOrEmpty(launcherDir))
+            {
+                Console.Error.WriteLine("[bridge] No shadPS4 launcher folder selected, cannot continue.");
+                return false;
+            }
+            portableLauncherDir = launcherDir;
+            WriteBridgeConfig();
+        }
+        emuPath = FindActiveEmulator();
+        if (FindConfigPath()) return true;
+
+        Console.Error.WriteLine("[bridge] Portable mode: could not find shadPS4 config.json (expected under user/ or launcher/).");
+        return false;
+    }
+
     static List<GameEntry> DiscoverGames()
     {
         var games = new List<GameEntry>();
         try
         {
-            string cfgPath = Path.Combine(
+            string cfgPath = configPath ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "shadPS4", "config.json");
 
@@ -230,6 +451,7 @@ static class ShadToypadBridge
         return Encoding.UTF8.GetString(bytes, start, end - start);
     }
 
+    [STAThread]
     static int Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
@@ -239,14 +461,30 @@ static class ShadToypadBridge
         // command ("<BOM>RUN" -> UNKNOWN CMD). So set UTF-8 without BOM in advance.
         try { Console.InputEncoding = new UTF8Encoding(false); } catch (Exception) { }
 
-        string gamePath = "";
         int port = DefaultPort;
-        string emuPath = null;
-        
+        string gamePath = "";
+
+        if (args.Length >= 1) gamePath = args[0];
+        if (args.Length >= 2 && !int.TryParse(args[1], out port))
+        {
+            Console.Error.WriteLine("[bridge] Bad port: " + args[1]);
+            return 2;
+        }
+
+        // First run: ask Normal (0) vs Portable (1), create ShadToypadBridge.ini next to the exe,
+        // and (in Portable mode) pick the shadPS4 "launcher" folder. Later runs just read the ini.
+        bool configOk = ResolvePaths();
+        if (!configOk && args.Length == 0)
+        {
+            Console.Error.WriteLine("[bridge] Cannot determine shadPS4 user data. Usage: ShadToypadBridge.exe <path-to-eboot.bin> [port]");
+            return 2;
+        }
+        if (!configOk)
+            Console.Error.WriteLine("[bridge] WARNING: shadPS4 config.json not found - game still runs, USB Toypad backend not auto-configured.");
+
         if (args.Length == 0)
         {
             Console.WriteLine("[bridge] Looking for QtLauncher games & emulator...");
-            emuPath = FindActiveEmulator();
             var games = DiscoverGames();
             
             if (games.Count == 0)
@@ -280,17 +518,6 @@ static class ShadToypadBridge
                 }
             }
         }
-        else
-        {
-            gamePath = args[0];
-            if (args.Length >= 2 && !int.TryParse(args[1], out port))
-            {
-                Console.Error.WriteLine("[bridge] Bad port: " + args[1]);
-                return 2;
-            }
-        }
-        
-        if (emuPath == null) emuPath = FindActiveEmulator();
         
         if (emuPath == null || !File.Exists(emuPath))
         {
@@ -529,7 +756,7 @@ static class ShadToypadBridge
     // ── config.json: enable the emulated Toypad (usb_device_backend = 3) ─
     static void EnsureDimensionsBackend()
     {
-        string cfg = Path.Combine(
+        string cfg = configPath ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "shadPS4", "config.json");
         if (!File.Exists(cfg))
