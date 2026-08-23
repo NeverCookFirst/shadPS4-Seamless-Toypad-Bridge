@@ -16,7 +16,7 @@ Tested on shadPS4 **v0.18.1 WIP** with LEGO Dimensions **CUSA01176**.
 
 - Windows 10/11 (the bridge is a plain .NET Framework exe — nothing to install)
 - A recent [shadPS4](https://github.com/shadps4-emu/shadPS4/releases) build with LEGO Dimensions working
-- [LegoToypad](https://github.com/harrysof/LegoToypad) v1.3
+- [LegoToypad](https://github.com/harrysof/LegoToypad) (latest release)
 - LEGO Dimensions installed in shadPS4
 
 ## Setup
