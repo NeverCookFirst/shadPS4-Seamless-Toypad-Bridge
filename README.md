@@ -39,7 +39,7 @@ Grab the latest zip from [**Releases**](../../releases). Windows x64, needs noth
 ## Setup
 
 1. Get a recent [shadPS4](https://github.com/shadps4-emu/shadPS4/releases) dev/pre-release build (the emulated Toypad and the IPC interface are relatively new — v0.18.1 WIP is known good) and make sure LEGO Dimensions runs in it normally first.
-2. Extract the zip anywhere and edit the two paths in **`run.cmd`** — one to your `shadPS4.exe`, one to the game's `eboot.bin`.
+2. Extract the zip **directly into your shadPS4 folder**, next to `shadPS4.exe` — the bridge auto-detects the emulator by looking in its own directory, so nothing needs pointing at it manually. Then edit the one remaining path in **`run.cmd`**, to the game's `eboot.bin`.
 3. Start `run.cmd`. The game must be launched **through the bridge** (it owns the emulator's stdin/stderr), not through the Qt launcher. Wait for:
    - `[bridge] IPC handshake done (RUN+START sent)`
    - `[bridge] Toypad listener active on 127.0.0.1:9191`
@@ -50,9 +50,9 @@ Grab the latest zip from [**Releases**](../../releases). Windows x64, needs noth
 
 | Setting | Where | Default |
 |---|---|---|
-| Listener port | Third command-line argument to `ShadToypadBridge.exe` (see `run.cmd`) | `9191` |
+| Listener port | Second command-line argument to `ShadToypadBridge.exe`, after the `eboot.bin` path (see `run.cmd`) | `9191` |
 
-If port 9191 is taken, set the same port in LegoToypad's `LegoToypad.ini` (`[Listener] Port=`) and pass it as the bridge's third argument.
+If port 9191 is taken, set the same port in LegoToypad's `LegoToypad.ini` (`[Listener] Port=`) and pass it as the bridge's second argument.
 
 There is no GUI on purpose — the bridge has no state to configure beyond the port.
 
@@ -74,9 +74,9 @@ Identical to the Cemu fork and the RPCS3 build. Every message starts with a 5-by
 | REMOVE `0x02` | none | `USB_REMOVE_FIGURE <pad> <slot> 1` |
 | MOVE `0x03` | none | `USB_MOVE_FIGURE <newPad> <newSlot> <oldPad> <oldSlot>` |
 
-If LOAD carries a path, shadPS4 keeps the file open and writes game data back to it — persistent, like a real tag. With no path (an embedded figure) the bridge stages the 180 tag bytes into a temp `.bin`, because shadPS4's `LoadFigure` asserts on reading exactly 180 bytes from a file; those figures live until restart and stale temp files are cleaned up on the next launch.
+If LOAD carries a path, shadPS4 keeps the file open and writes game data back to it — persistent, like a real tag. With no path (an embedded figure) the bridge stages the 180 tag bytes into a `.bin` under `%LOCALAPPDATA%\ShadToypadBridge\`, because shadPS4's `LoadFigure` asserts on reading exactly 180 bytes from a file. Reloading the **same** figure into the same slot reuses that staged file without rewriting it, so game-written data (vehicle builds/upgrades) survives the reload; loading a **different** figure stages a fresh uniquely-named file instead of overwriting, since shadPS4 holds the currently loaded one open with a write lock. Staged files are wiped on the next bridge launch.
 
-LOAD deliberately overwrites an occupied slot (remove first, then load), matching the Cemu listener's contract — `USB_REMOVE_FIGURE` on an empty slot is a safe no-op in shadPS4. Out-of-range pad/slot values and unknown commands are logged and the connection is dropped.
+LOAD deliberately overwrites an occupied slot (remove first, then load, with a short pause between the two so the game processes the "figure removed" event before the "figure added" one), matching the Cemu listener's contract — `USB_REMOVE_FIGURE` on an empty slot is a safe no-op in shadPS4. Out-of-range pad/slot values and unknown commands are logged and the connection is dropped.
 
 ## Notes / caveats
 
