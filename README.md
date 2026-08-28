@@ -8,6 +8,8 @@ A small standalone utility that connects the controller-driven [**LegoToypad**](
 
 Tested on shadPS4 **v0.18.1 WIP** with LEGO Dimensions **CUSA01176**.
 
+Thanks [LEGO Dimensions Discord](https://discord.gg/PuXpBMFE4P) for support!
+
 ## Video guide
 
 [![shadPS4 Seamless Toypad Bridge — setup guide](https://img.youtube.com/vi/98PDU0lcJ1c/maxresdefault.jpg)](https://www.youtube.com/watch?v=98PDU0lcJ1c)
