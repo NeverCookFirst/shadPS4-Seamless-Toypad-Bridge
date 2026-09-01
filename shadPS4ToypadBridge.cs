@@ -35,6 +35,13 @@ static class ShadToypadBridge
     // arrives. Without it, two consecutive events for the same slot can desync the game
     // (swap/clear "doesn't register").
     const int RemoveThenLoadDelayMs = 100;
+    // Delay (ms) between USB_TEMP_REMOVE_FIGURE (figure picked up) and USB_MOVE_FIGURE
+    // (figure placed down) when relocating a figure. Mirror of the Cemu/RPCS3 listener
+    // flow: the game must receive and process the "figure removed" 0x56 event for the
+    // source slot before the "figure added" event for the destination arrives. When the
+    // two events land back-to-back the game treats them as one change and step-based /
+    // keystone interactions silently do nothing.
+    const int MovePickupDelayMs = 500;
     // A small pause after processing a message so the bridge doesn't pipeline commands back-to-back.
     const int PostMessageSettleMs = 40;
 
@@ -66,6 +73,13 @@ static class ShadToypadBridge
         public bool Occupied;
     }
     static readonly SlotState[] slots = new SlotState[7];
+
+    // Latest LED snapshot (30 bytes, matching the app's GET_LED wire format)
+    // pushed by shadPS4 via ";LED_STATE" lines on stderr. The app's GET_LED
+    // poll is served straight from this cache, so no request/response round-trip
+    // is needed between the bridge and shadPS4.
+    static readonly object ledLock = new object();
+    static byte[] latestLedSnapshot;
 
     class GameEntry
     {
@@ -580,6 +594,16 @@ static class ShadToypadBridge
         {
             while ((line = emu.StandardError.ReadLine()) != null)
             {
+                // shadPS4 pushes a ";LED_STATE <serial> <27 ints>" line whenever
+                // the game changes a pad's glow. Cache it for the GET_LED poll and
+                // drop it from the console echo (it would be noisy at 30Hz).
+                if (line.StartsWith(";LED_STATE", StringComparison.Ordinal))
+                {
+                    byte[] snap = BuildLedSnapshot(line);
+                    if (snap != null) lock (ledLock) latestLedSnapshot = snap;
+                    continue;
+                }
+
                 Console.Error.WriteLine(line);
                 if (line.TrimEnd() == ";#IPC_END")
                 {
@@ -640,7 +664,9 @@ static class ShadToypadBridge
         byte pad = header[1];
         byte index = header[2];
 
-        if (pad < 1 || pad > 3 || index >= 7)
+        // GET_LED (0x04) carries no pad/index (they're 0), so skip the slot
+        // validation for it - it would otherwise be rejected below.
+        if (cmd != 0x04 && (pad < 1 || pad > 3 || index >= 7))
         {
             Console.Error.WriteLine(string.Format("[bridge] Rejected: cmd=0x{0:x2} pad={1} index={2}", cmd, pad, index));
             return;
@@ -718,6 +744,28 @@ static class ShadToypadBridge
                     return;
                 }
 
+                // Mirror of the Cemu/RPCS3 listener contract: a MOVE is announced
+                // as a pickup first. TempRemove queues a 0x56 "figure removed"
+                // event for the source slot so the game can process the pickup,
+                // then the pickup delay gives it time to do so, and only then the
+                // actual MoveFigure queues the "figure added" event at the
+                // destination. Without the separation the two events queue so
+                // close together that the game merges them into one change and
+                // step-based interactions (keystone pads - Scale/Shift/Chroma/
+                // Locate...) silently do nothing. This is also why the old
+                // workaround was "move it in, then move it to the same pad again".
+                lock (slotsLock)
+                {
+                    SlotState src = slots[srcIndex];
+                    if (src == null || !src.Occupied)
+                    {
+                        Console.Error.WriteLine(string.Format("[bridge] MOVE ignored: source pad={0} index={1} is empty", srcPad, srcIndex));
+                        return;
+                    }
+                }
+                SendIpc("USB_TEMP_REMOVE_FIGURE\n" + srcIndex + "\n");
+                if (MovePickupDelayMs > 0)
+                    Thread.Sleep(MovePickupDelayMs);
                 SendIpc("USB_MOVE_FIGURE\n" + pad + "\n" + index + "\n" + srcPad + "\n" + srcIndex + "\n");
 
                 // Move the slot bookkeeping: the destination receives the source figure, the source clears.
@@ -733,6 +781,17 @@ static class ShadToypadBridge
                 if (PostMessageSettleMs > 0)
                     Thread.Sleep(PostMessageSettleMs);
                 Console.WriteLine(string.Format("[bridge] MOVE {0}/{1} -> {2}/{3}", srcPad, srcIndex, pad, index));
+                break;
+            }
+            case 0x04: // GET_LED - serve the latest shadPS4-pushed snapshot
+            {
+                byte[] snap;
+                lock (ledLock)
+                {
+                    snap = latestLedSnapshot != null ? (byte[])latestLedSnapshot.Clone() : DefaultLedSnapshot();
+                }
+                try { ns.Write(snap, 0, snap.Length); }
+                catch (Exception ex) { Console.Error.WriteLine("[bridge] GET_LED send failed: " + ex.Message); }
                 break;
             }
             default:
@@ -751,6 +810,49 @@ static class ShadToypadBridge
             off += got;
         }
         return true;
+    }
+
+    // Parses ";LED_STATE <serial> then 27 ints (3 regions x pad, mode, r, g, b,
+    // onMs, offMs, count, speedMs)" into the app's 30-byte snapshots.
+    static byte[] BuildLedSnapshot(string line)
+    {
+        string[] tokens = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length < 2 + 3 * 9) return null; // ";LED_STATE" + serial + 27 region values
+        byte[] resp = new byte[3 + 3 * 9];
+        resp[0] = 0x4C; // 'L' magic
+        resp[1] = ParseByte(tokens[1]); // serial
+        resp[2] = 0x03; // region count
+        for (int i = 0; i < 3; i++)
+        {
+            int baseIdx = 2 + i * 9; // tokens[2..10] = region 0, etc.
+            int off = 3 + i * 9;
+            resp[off + 0] = ParseByte(tokens[baseIdx + 0]);
+            resp[off + 1] = ParseByte(tokens[baseIdx + 1]);
+            resp[off + 2] = ParseByte(tokens[baseIdx + 2]);
+            resp[off + 3] = ParseByte(tokens[baseIdx + 3]);
+            resp[off + 4] = ParseByte(tokens[baseIdx + 4]);
+            resp[off + 5] = ParseByte(tokens[baseIdx + 5]);
+            resp[off + 6] = ParseByte(tokens[baseIdx + 6]);
+            resp[off + 7] = ParseByte(tokens[baseIdx + 7]);
+            resp[off + 8] = ParseByte(tokens[baseIdx + 8]);
+        }
+        return resp;
+    }
+
+    static byte ParseByte(string s)
+    {
+        byte v;
+        byte.TryParse(s, out v);
+        return v;
+    }
+
+    // All-off snapshot used until shadPS4 supplies a real ";LED_STATE".
+    static byte[] DefaultLedSnapshot()
+    {
+        byte[] resp = new byte[3 + 3 * 9];
+        resp[0] = 0x4C; // 'L'
+        resp[2] = 0x03; // region count
+        return resp;
     }
 
     // ── config.json: enable the emulated Toypad (usb_device_backend = 3) ─
