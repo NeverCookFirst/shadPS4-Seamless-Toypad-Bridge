@@ -74,10 +74,10 @@ static class ShadToypadBridge
     }
     static readonly SlotState[] slots = new SlotState[7];
 
-    // Latest LED snapshot (30 bytes, matching the app's GET_LED wire format)
-    // pushed by shadPS4 via ";LED_STATE" lines on stderr. The app's GET_LED
-    // poll is served straight from this cache, so no request/response round-trip
-    // is needed between the bridge and shadPS4.
+    // Latest LED snapshot (40 bytes, protocol version 2 - matching the app's
+    // GET_LED wire format) pushed by shadPS4 via ";LED_STATE" lines on stderr.
+    // The app's GET_LED poll is served straight from this cache, so no
+    // request/response round-trip is needed between the bridge and shadPS4.
     static readonly object ledLock = new object();
     static byte[] latestLedSnapshot;
 
@@ -594,7 +594,7 @@ static class ShadToypadBridge
         {
             while ((line = emu.StandardError.ReadLine()) != null)
             {
-                // shadPS4 pushes a ";LED_STATE <serial> <27 ints>" line whenever
+                // shadPS4 pushes a ";LED_STATE <serial> <36 ints>" line whenever
                 // the game changes a pad's glow. Cache it for the GET_LED poll and
                 // drop it from the console echo (it would be noisy at 30Hz).
                 if (line.StartsWith(";LED_STATE", StringComparison.Ordinal))
@@ -812,20 +812,27 @@ static class ShadToypadBridge
         return true;
     }
 
-    // Parses ";LED_STATE <serial> then 27 ints (3 regions x pad, mode, r, g, b,
-    // onMs, offMs, count, speedMs)" into the app's 30-byte snapshots.
+    // Wire protocol version 2 (matches the Cemu/RPCS3 listeners and the app's
+    // GET_LED parser): adds fromR/fromG/fromB, the pre-fade colour, so the app
+    // can render the real toypad's two-colour cross-fade.
+    const byte LedProtocolVersion = 2;
+
+    // Parses ";LED_STATE <serial> then 36 ints (3 regions x pad, mode, r, g, b,
+    // fromR, fromG, fromB, onMs, offMs, count, speedMs)" into the app's 40-byte
+    // protocol-version-2 snapshot.
     static byte[] BuildLedSnapshot(string line)
     {
         string[] tokens = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-        if (tokens.Length < 2 + 3 * 9) return null; // ";LED_STATE" + serial + 27 region values
-        byte[] resp = new byte[3 + 3 * 9];
+        if (tokens.Length < 2 + 3 * 12) return null; // ";LED_STATE" + serial + 36 region values
+        byte[] resp = new byte[4 + 3 * 12];
         resp[0] = 0x4C; // 'L' magic
         resp[1] = ParseByte(tokens[1]); // serial
-        resp[2] = 0x03; // region count
+        resp[2] = LedProtocolVersion;
+        resp[3] = 0x03; // region count
         for (int i = 0; i < 3; i++)
         {
-            int baseIdx = 2 + i * 9; // tokens[2..10] = region 0, etc.
-            int off = 3 + i * 9;
+            int baseIdx = 2 + i * 12; // tokens[2..13] = region 0, etc.
+            int off = 4 + i * 12;
             resp[off + 0] = ParseByte(tokens[baseIdx + 0]);
             resp[off + 1] = ParseByte(tokens[baseIdx + 1]);
             resp[off + 2] = ParseByte(tokens[baseIdx + 2]);
@@ -835,6 +842,9 @@ static class ShadToypadBridge
             resp[off + 6] = ParseByte(tokens[baseIdx + 6]);
             resp[off + 7] = ParseByte(tokens[baseIdx + 7]);
             resp[off + 8] = ParseByte(tokens[baseIdx + 8]);
+            resp[off + 9] = ParseByte(tokens[baseIdx + 9]);
+            resp[off + 10] = ParseByte(tokens[baseIdx + 10]);
+            resp[off + 11] = ParseByte(tokens[baseIdx + 11]);
         }
         return resp;
     }
@@ -849,9 +859,10 @@ static class ShadToypadBridge
     // All-off snapshot used until shadPS4 supplies a real ";LED_STATE".
     static byte[] DefaultLedSnapshot()
     {
-        byte[] resp = new byte[3 + 3 * 9];
+        byte[] resp = new byte[4 + 3 * 12];
         resp[0] = 0x4C; // 'L'
-        resp[2] = 0x03; // region count
+        resp[2] = LedProtocolVersion;
+        resp[3] = 0x03; // region count
         return resp;
     }
 
